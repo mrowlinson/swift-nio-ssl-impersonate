@@ -338,6 +338,15 @@ public final class NIOSSLContext {
         returnCode = CNIOBoringSSL_SSL_CTX_set_cipher_list(context, configuration.cipherSuites)
         precondition(1 == returnCode)
 
+        // Browser impersonation (lexiforest BoringSSL chrome145 patch).
+        // Applied AFTER cipher list because the patched
+        // SSL_CTX_set_cipher_list captures `ctx->cipher_order` for
+        // ClientHello replay — we want our chosen list to be the one
+        // that's replayed, not BoringSSL's default.
+        if let profile = configuration.chromeImpersonation {
+            NIOSSLContext.applyChromeImpersonation(profile, context: context)
+        }
+
         // Curves list.
         if let curves = configuration.curves {
             returnCode =
@@ -643,6 +652,45 @@ extension NIOSSLContext {
         }
         try configureTrustRoots(trustRoots: trustRoots ?? .default)
         for root in additionalTrustRoots { try configureTrustRoots(trustRoots: .init(from: root)) }
+    }
+
+    /// Apply the lexiforest BoringSSL chrome145 patch setters to the
+    /// freshly-built SSL_CTX. Called from `init` when
+    /// `TLSConfiguration.chromeImpersonation` is non-nil.
+    ///
+    /// Chrome 145 ClientHello fingerprint shape (vs upstream BoringSSL):
+    ///   - Extensions are permuted, with `extension_order` listing the
+    ///     four "fixed-position" extensions Chrome always puts first.
+    ///   - Key share offer is limited to a single group (X25519MLKEM768
+    ///     when supported, otherwise X25519). BoringSSL's default sends
+    ///     two; Chrome sends one.
+    ///   - GREASE / ALPS new codepoint / certificate compression rely on
+    ///     BoringSSL's default behavior in the patched fork (already
+    ///     enabled when `chrome145` is requested via patches in
+    ///     `ssl/extensions.cc` / `ssl/handshake_client.cc`).
+    private static func applyChromeImpersonation(
+        _ profile: ChromeImpersonationProfile,
+        context: OpaquePointer
+    ) {
+        switch profile {
+        case .chrome145:
+            // Permute extensions (Chrome 110+ behavior).
+            CNIOBoringSSL_SSL_CTX_set_permute_extensions(context, 1)
+
+            // Pin the four fixed-position extensions Chrome 145 emits
+            // first. Order matches the lexiforest chrome145 signature.
+            // The remaining extensions are randomized (above).
+            "0,23,65281,10,11".withCString { ptr in
+                _ = CNIOBoringSSL_SSL_CTX_set_extension_order(
+                    context, UnsafeMutablePointer(mutating: ptr)
+                )
+            }
+
+            // Chrome 145 offers exactly ONE key share (the first group
+            // in the supported_groups list). BoringSSL's default sends
+            // two. Setting limit to 1 matches Chrome.
+            CNIOBoringSSL_SSL_CTX_set_key_shares_limit(context, 1)
+        }
     }
 
     private static func configureCertificateValidation(

@@ -455,6 +455,17 @@ public struct TLSConfiguration {
     /// This instructs the client which identities can be used by evaluating what CA the identity certificate was issued from.
     public var sendCANameList: Bool
 
+    /// Browser-impersonation profile applied at SSL_CTX construction time.
+    /// When set, additional patched-BoringSSL setters fire to produce a
+    /// TLS ClientHello byte-shape matching a real browser version. nil
+    /// (the default) leaves the SSL_CTX with NIOSSL's stock behavior.
+    ///
+    /// Only effective when this package is the lexiforest-patched fork.
+    /// Upstream `apple/swift-nio-ssl` ignores this field — calling
+    /// ``chrome145Impersonation()`` on upstream returns a configuration
+    /// with no fingerprint changes beyond cipher / curve order.
+    public var chromeImpersonation: ChromeImpersonationProfile? = nil
+
     private init(
         cipherSuiteValues: [NIOTLSCipher] = [],
         cipherSuites: String = defaultCipherSuites,

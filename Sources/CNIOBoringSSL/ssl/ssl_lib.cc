@@ -396,7 +396,8 @@ ssl_ctx_st::ssl_ctx_st(const SSL_METHOD *ssl_method)
       handoff(false),
       enable_early_data(false),
       aes_hw_override(false),
-      aes_hw_override_value(false) {
+      aes_hw_override_value(false),
+      key_shares_limit(0) {
   CRYPTO_MUTEX_init(&lock);
   CRYPTO_new_ex_data(&ex_data);
 }
@@ -515,14 +516,19 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->config->retain_only_sha256_of_client_certs =
       ctx->retain_only_sha256_of_client_certs;
   ssl->config->permute_extensions = ctx->permute_extensions;
+  ssl->config->extension_order = ctx->extension_order;  // curl-impersonate
+  ssl->config->cipher_order = ctx->cipher_order;  // curl-impersonate
+  ssl->config->key_usage_check_enabled = ctx->key_usage_check_enabled;  // curl-impersonate
   ssl->config->aes_hw_override = ctx->aes_hw_override;
   ssl->config->aes_hw_override_value = ctx->aes_hw_override_value;
   ssl->config->compliance_policy = ctx->compliance_policy;
+  ssl->config->key_shares_limit = ctx->key_shares_limit;
 
   if (!ssl->config->supported_group_list.CopyFrom(ctx->supported_group_list) ||
       !ssl->config->alpn_client_proto_list.CopyFrom(
           ctx->alpn_client_proto_list) ||
-      !ssl->config->verify_sigalgs.CopyFrom(ctx->verify_sigalgs)) {
+      !ssl->config->verify_sigalgs.CopyFrom(ctx->verify_sigalgs) ||
+      !ssl->config->delegated_credentials.CopyFrom(ctx->delegated_credentials)) {
     return nullptr;
   }
 
@@ -542,6 +548,7 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->config->signed_cert_timestamps_enabled =
       ctx->signed_cert_timestamps_enabled;
   ssl->config->ocsp_stapling_enabled = ctx->ocsp_stapling_enabled;
+  ssl->config->record_size_limit = ctx->record_size_limit;
   ssl->config->handoff = ctx->handoff;
   ssl->quic_method = ctx->quic_method;
 
@@ -566,6 +573,7 @@ SSL_CONFIG::SSL_CONFIG(SSL *ssl_arg)
       jdk11_workaround(false),
       quic_use_legacy_codepoint(false),
       permute_extensions(false),
+      key_shares_limit(0),
       alps_use_new_codepoint(false),
       check_client_certificate_type(true),
       check_ecdsa_curve(true) {
@@ -1972,6 +1980,7 @@ const char *SSL_get_cipher_list(const SSL *ssl, int n) {
 int SSL_CTX_set_cipher_list(SSL_CTX *ctx, const char *str) {
   const bool has_aes_hw = ctx->aes_hw_override ? ctx->aes_hw_override_value
                                                : EVP_has_aes_hardware();
+  ctx->cipher_order = str;
   return ssl_create_cipher_list(&ctx->cipher_list, has_aes_hw, str,
                                 false /* not strict */);
 }
@@ -2063,6 +2072,28 @@ void SSL_enable_ocsp_stapling(SSL *ssl) {
     return;
   }
   ssl->config->ocsp_stapling_enabled = true;
+}
+
+void SSL_set_record_size_limit(SSL *ssl, uint16_t limit) {
+  if (!ssl->config) {
+    return;
+  }
+  ssl->config->record_size_limit = limit;
+}
+
+void SSL_CTX_set_record_size_limit(SSL_CTX *ctx, uint16_t limit) {
+  ctx->record_size_limit = limit;
+}
+
+void SSL_set_key_shares_limit(SSL *ssl, uint8_t limit) {
+  if (!ssl->config) {
+    return;
+  }
+  ssl->config->key_shares_limit = limit;
+}
+
+void SSL_CTX_set_key_shares_limit(SSL_CTX *ctx, uint8_t limit) {
+  ctx->key_shares_limit = limit;
 }
 
 void SSL_get0_signed_cert_timestamp_list(const SSL *ssl, const uint8_t **out,
@@ -2884,6 +2915,17 @@ void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
 
 void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
   ctx->permute_extensions = !!enabled;
+}
+
+// curl-impersonate: set extensions order
+int SSL_CTX_set_extension_order(SSL_CTX *ctx, char *order) {
+  ctx->extension_order = order;
+  return 0;
+}
+
+int SSL_CTX_set_key_usage_check_enabled(SSL_CTX *ctx, int enabled) {
+  ctx->key_usage_check_enabled = enabled;
+  return 0;
 }
 
 void SSL_set_permute_extensions(SSL *ssl, int enabled) {

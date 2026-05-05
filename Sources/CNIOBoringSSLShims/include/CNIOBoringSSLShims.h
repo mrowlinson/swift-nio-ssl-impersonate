@@ -38,6 +38,14 @@ int CNIOBoringSSLShims_SSL_CTX_set_app_data(SSL_CTX *ctx, void *data);
 int CNIOBoringSSLShims_ERR_GET_LIB(uint32_t err);
 int CNIOBoringSSLShims_ERR_GET_REASON(uint32_t err);
 
+// Register brotli (alg_id=2) certificate compression on |ctx|. The
+// compressor returns failure (clients do not compress); the
+// decompressor uses Apple's libcompression on Darwin and is a stub
+// that fails on other platforms (cert compression is offer-only on
+// non-Apple). Returns the BoringSSL return code from
+// SSL_CTX_add_cert_compression_alg (1 on success, 0 on failure).
+int CNIOBoringSSLShims_register_brotli_cert_compression(SSL_CTX *ctx);
+
 #if defined(__cplusplus)
 }  // extern "C"
 #endif

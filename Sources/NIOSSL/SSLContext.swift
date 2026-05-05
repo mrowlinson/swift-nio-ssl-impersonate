@@ -524,6 +524,36 @@ public final class NIOSSLContext {
             return nil
         }
 
+        // Per-SSL browser-impersonation setup: ALPS (application_settings)
+        // is registered against each SSL because BoringSSL exposes only
+        // SSL_add_application_settings, not an SSL_CTX equivalent. The
+        // ALPN list registered for ALPS must be a subset of the ALPN
+        // protocols we offer; we register the same list as the
+        // configuration's applicationProtocols (typically ["h2"] for the
+        // Chrome impersonation case).
+        if configuration.chromeImpersonation != nil {
+            for proto in configuration.encodedApplicationProtocols {
+                _ = proto.withUnsafeBufferPointer { bp -> Int32 in
+                    // Each encoded entry is `[len, byte, byte, ...]`; ALPS
+                    // takes just the bytes (no length prefix).
+                    guard let base = bp.baseAddress, bp.count > 1 else { return 1 }
+                    let length = Int(base[0])
+                    return CNIOBoringSSL_SSL_add_application_settings(
+                        ssl, base.advanced(by: 1), length, nil, 0
+                    )
+                }
+            }
+            // Chrome 130+ uses the new ALPS codepoint (17613) instead of
+            // the draft codepoint (17513). Lexiforest's chrome142 signature
+            // emits the new codepoint.
+            CNIOBoringSSL_SSL_set_alps_use_new_codepoint(ssl, 1)
+            // encrypted_client_hello (65037): Chrome always advertises
+            // ECH support with a GREASE-style payload, even when the
+            // target server doesn't publish an ECH config. BoringSSL
+            // generates a random opaque advertisement for us.
+            CNIOBoringSSL_SSL_set_enable_ech_grease(ssl, 1)
+        }
+
         let conn = SSLConnection(ownedSSL: ssl, parentContext: self)
 
         // If we need to turn on the validation on Apple platforms, do it here.
@@ -689,8 +719,12 @@ extension NIOSSLContext {
         case .chrome145:
             CNIOBoringSSL_SSL_CTX_set_permute_extensions(context, 1)
             CNIOBoringSSL_SSL_CTX_set_grease_enabled(context, 1)
-            CNIOBoringSSL_SSL_CTX_enable_ocsp_stapling(context)              // status_request
-            CNIOBoringSSL_SSL_CTX_enable_signed_cert_timestamps(context)     // signed_certificate_timestamp
+            CNIOBoringSSL_SSL_CTX_enable_ocsp_stapling(context)              // status_request (5)
+            CNIOBoringSSL_SSL_CTX_enable_signed_cert_timestamps(context)     // signed_certificate_timestamp (18)
+            // compress_certificate (27): register brotli (alg_id=2) so the
+            // extension is emitted with the Chrome value. The decompressor
+            // wraps Apple libcompression on Darwin (see CNIOBoringSSLShims).
+            _ = CNIOBoringSSLShims_register_brotli_cert_compression(context)
         }
     }
 

@@ -35,7 +35,10 @@ extension TLSConfiguration {
         var config = TLSConfiguration.makeClientConfiguration()
         config.minimumTLSVersion = .tlsv12
         config.maximumTLSVersion = .tlsv13
-        config.applicationProtocols = ["h2"]
+        // Chrome 142+ ALPN extension advertises both h2 and http/1.1
+        // (per lexiforest chrome_142.yaml); some servers fingerprint on
+        // single-protocol ALPN as a non-Chrome signal.
+        config.applicationProtocols = ["h2", "http/1.1"]
 
         // Chrome 145's cipher list, exact order:
         // Chrome 142+ cipher list, exact order. The leading GREASE

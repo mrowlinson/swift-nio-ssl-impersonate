@@ -658,38 +658,22 @@ extension NIOSSLContext {
     /// freshly-built SSL_CTX. Called from `init` when
     /// `TLSConfiguration.chromeImpersonation` is non-nil.
     ///
-    /// Chrome 145 ClientHello fingerprint shape (vs upstream BoringSSL):
-    ///   - Extensions are permuted, with `extension_order` listing the
-    ///     four "fixed-position" extensions Chrome always puts first.
-    ///   - Key share offer is limited to a single group (X25519MLKEM768
-    ///     when supported, otherwise X25519). BoringSSL's default sends
-    ///     two; Chrome sends one.
-    ///   - GREASE / ALPS new codepoint / certificate compression rely on
-    ///     BoringSSL's default behavior in the patched fork (already
-    ///     enabled when `chrome145` is requested via patches in
-    ///     `ssl/extensions.cc` / `ssl/handshake_client.cc`).
+    /// Currently only `set_permute_extensions(1)` is wired — that
+    /// alone is enough to defeat the simplest "extension order is a
+    /// fingerprint" detection. The other patched setters
+    /// (`set_extension_order`, `set_key_shares_limit`) need real
+    /// Chrome-shape inputs to be useful; calling them with wrong
+    /// values can break TLS 1.3 negotiation (TLS13_DOWNGRADE), so
+    /// they are deferred until the corpus side knows the right
+    /// "fixed-prefix" extension list and key-share count for the
+    /// targeted Chrome version.
     private static func applyChromeImpersonation(
         _ profile: ChromeImpersonationProfile,
         context: OpaquePointer
     ) {
         switch profile {
         case .chrome145:
-            // Permute extensions (Chrome 110+ behavior).
             CNIOBoringSSL_SSL_CTX_set_permute_extensions(context, 1)
-
-            // Pin the four fixed-position extensions Chrome 145 emits
-            // first. Order matches the lexiforest chrome145 signature.
-            // The remaining extensions are randomized (above).
-            "0,23,65281,10,11".withCString { ptr in
-                _ = CNIOBoringSSL_SSL_CTX_set_extension_order(
-                    context, UnsafeMutablePointer(mutating: ptr)
-                )
-            }
-
-            // Chrome 145 offers exactly ONE key share (the first group
-            // in the supported_groups list). BoringSSL's default sends
-            // two. Setting limit to 1 matches Chrome.
-            CNIOBoringSSL_SSL_CTX_set_key_shares_limit(context, 1)
         }
     }
 

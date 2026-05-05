@@ -71,6 +71,7 @@ let package = Package(
         .library(name: "NIOSSL", targets: ["NIOSSL"]),
         .executable(name: "NIOTLSServer", targets: ["NIOTLSServer"]),
         .executable(name: "NIOSSLHTTP1Client", targets: ["NIOSSLHTTP1Client"]),
+        .executable(name: "Chrome145Probe", targets: ["Chrome145Probe"]),
         /* This target is used only for symbol mangling. It's added and removed automatically because it emits build warnings. MANGLE_START
                 .library(name: "CNIOBoringSSL", type: .static, targets: ["CNIOBoringSSL"]),
         MANGLE_END */
@@ -132,6 +133,17 @@ let package = Package(
             ],
             exclude: [
                 "README.md"
+            ],
+            swiftSettings: strictConcurrencySettings
+        ),
+        .executableTarget(
+            name: "Chrome145Probe",
+            dependencies: [
+                "NIOSSL",
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOFoundationCompat", package: "swift-nio"),
             ],
             swiftSettings: strictConcurrencySettings
         ),

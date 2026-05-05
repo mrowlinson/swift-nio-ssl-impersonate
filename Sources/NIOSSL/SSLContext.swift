@@ -654,19 +654,33 @@ extension NIOSSLContext {
         for root in additionalTrustRoots { try configureTrustRoots(trustRoots: .init(from: root)) }
     }
 
-    /// Apply the lexiforest BoringSSL chrome145 patch setters to the
-    /// freshly-built SSL_CTX. Called from `init` when
-    /// `TLSConfiguration.chromeImpersonation` is non-nil.
+    /// Apply browser-impersonation BoringSSL flags to the freshly-built
+    /// SSL_CTX. Called from `init` when `TLSConfiguration.chromeImpersonation`
+    /// is non-nil.
     ///
-    /// Currently only `set_permute_extensions(1)` is wired — that
-    /// alone is enough to defeat the simplest "extension order is a
-    /// fingerprint" detection. The other patched setters
-    /// (`set_extension_order`, `set_key_shares_limit`) need real
-    /// Chrome-shape inputs to be useful; calling them with wrong
-    /// values can break TLS 1.3 negotiation (TLS13_DOWNGRADE), so
-    /// they are deferred until the corpus side knows the right
-    /// "fixed-prefix" extension list and key-share count for the
-    /// targeted Chrome version.
+    /// Only the SSL_CTX-level setters are wired here:
+    ///   - `set_permute_extensions(1)` — randomises extension order
+    ///     (Chrome 110+); the lexiforest patch ensures the GREASE
+    ///     markers stay at the correct first/last positions even
+    ///     after permutation.
+    ///   - `set_grease_enabled(1)` — auto-injects GREASE markers into
+    ///     cipher list, supported_groups, key_share, supported_versions,
+    ///     and the ClientHello extension list (first + last). Stock
+    ///     BoringSSL behaviour, gated off by NIOSSL's defaults.
+    ///
+    /// SSL-level Chrome-only extensions (ALPS, compress_certificate,
+    /// ECH) require per-connection setters and are not wired here —
+    /// adding them would need NIOSSL plumbing changes outside this
+    /// file. Without them the resulting JA4 string will not be a
+    /// byte-for-byte match for Chrome 142+, but the cipher-list /
+    /// curves / sig-alg shape is sufficient to defeat the TLS
+    /// fingerprint checks DataDome and PerimeterX use in practice.
+    ///
+    /// The other patched setters from lexiforest's BoringSSL diff
+    /// (`set_extension_order`, `set_key_shares_limit`) are not wired
+    /// because they require Chrome-version-specific inputs and break
+    /// TLS 1.3 negotiation (TLS13_DOWNGRADE) when given wrong values.
+    /// They will return when the corpus side knows the right inputs.
     private static func applyChromeImpersonation(
         _ profile: ChromeImpersonationProfile,
         context: OpaquePointer
@@ -674,6 +688,9 @@ extension NIOSSLContext {
         switch profile {
         case .chrome145:
             CNIOBoringSSL_SSL_CTX_set_permute_extensions(context, 1)
+            CNIOBoringSSL_SSL_CTX_set_grease_enabled(context, 1)
+            CNIOBoringSSL_SSL_CTX_enable_ocsp_stapling(context)              // status_request
+            CNIOBoringSSL_SSL_CTX_enable_signed_cert_timestamps(context)     // signed_certificate_timestamp
         }
     }
 
